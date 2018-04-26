@@ -6,6 +6,8 @@
 #define Mb 1024 * Kb
 #define Gb 1024 * Mb
 
+#define ADDR_CHARS sizeof(ADDRINT)
+
 #define RAW_TRACE_BUF_SIZE 512*Kb
 #define TRACE_LIMIT 1*Gb
 #define INS_DELIMITER '\n'
@@ -23,8 +25,8 @@ typedef struct raw_trace_s {
 } raw_trace_t;
 
 raw_trace_t* raw_trace;
-bool isFirstIns = true;
 
+bool isFirstIns = true;
 const char* prog_name;
 
 raw_trace_item_t* getNewRawTraceItem() {
@@ -33,6 +35,20 @@ raw_trace_item_t* getNewRawTraceItem() {
 	new_raw_trace_item->cursor_pos = 0;
 	new_raw_trace_item->next = NULL;
 	return new_raw_trace_item;
+}
+
+void recordInRawTrace(const char* buf, size_t buf_len) {
+	raw_trace_item_t* raw_trace_item = raw_trace->tail;
+	// printf("Cursor@%d(%d) %s\n", raw_trace_item->cursor_pos, disassembled_ins_len, disassembled_ins);
+	// If buf of latest raw_trace_item is not enough create a new one
+	if (raw_trace_item->cursor_pos + buf_len >= RAW_TRACE_BUF_SIZE) {
+		raw_trace_item->next = getNewRawTraceItem();
+		raw_trace_item = raw_trace_item->next;
+		raw_trace->tail = raw_trace_item;
+	}
+	memcpy(raw_trace_item->buf + raw_trace_item->cursor_pos, buf, buf_len);
+	raw_trace_item->cursor_pos += buf_len;
+	raw_trace->trace_size += buf_len;
 }
 
 void printRawTrace(FILE* f) {
@@ -47,17 +63,24 @@ void printRawTrace(FILE* f) {
 
 void INS_Analysis(char* disassembled_ins, UINT32 disassembled_ins_len) {
 	if (raw_trace->trace_size >= TRACE_LIMIT) return;
-	raw_trace_item_t* raw_trace_item = raw_trace->tail;
-	// printf("Cursor@%d(%d) %s\n", raw_trace_item->cursor_pos, disassembled_ins_len, disassembled_ins);
-	// If buf of latest raw_trace_item is not enough create a new one
-	if (raw_trace_item->cursor_pos + disassembled_ins_len >= RAW_TRACE_BUF_SIZE) {
-		raw_trace_item->next = getNewRawTraceItem();
-		raw_trace_item = raw_trace_item->next;
-		raw_trace->tail = raw_trace_item;
+	recordInRawTrace(disassembled_ins, disassembled_ins_len);
+}
+
+void INS_JumpAnalysis(ADDRINT target_branch, INT32 taken) {
+	if (taken) {
+		// printf("(%d): %x\n", sizeof(ADDRINT), target_branch);
+		/* Allocate enough space in order to save:
+			- @ char (1 byte)
+			- address in hex format (sizeof(ADDRINT) * 2 bytes)
+			- \n delimiter (1 byte)
+		*/
+		size_t buf_len = (sizeof(ADDRINT) * 2 + 2);
+		char* buf = (char*) malloc(sizeof(char) * buf_len);
+		buf[0] = '\n';
+		buf[1] = '@';
+		sprintf(buf + 2, "%x", target_branch);
+		recordInRawTrace(buf, buf_len);
 	}
-	memcpy(raw_trace_item->buf + raw_trace_item->cursor_pos, disassembled_ins, disassembled_ins_len);
-	raw_trace_item->cursor_pos += disassembled_ins_len;
-	raw_trace->trace_size += disassembled_ins_len;
 }
 
 void Trace(TRACE trace, void* v) {
@@ -94,6 +117,14 @@ void Trace(TRACE trace, void* v) {
 				IARG_UINT32,
 				disassembled_ins_len,
 				IARG_END);
+			
+			if (INS_IsBranchOrCall(ins)) {
+				INS_InsertCall(ins, IPOINT_BEFORE,
+					(AFUNPTR)INS_JumpAnalysis,
+					IARG_BRANCH_TARGET_ADDR,
+					IARG_BRANCH_TAKEN,
+					IARG_END);
+			}
 		}
     }
 }
