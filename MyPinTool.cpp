@@ -9,7 +9,7 @@
 #define ADDR_CHARS sizeof(ADDRINT)
 
 #define RAW_TRACE_BUF_SIZE 512*Kb
-#define TRACE_LIMIT 1*Gb
+#define TRACE_LIMIT 128*Mb
 #define INS_DELIMITER '\n'
 
 typedef struct raw_trace_item_s {
@@ -31,7 +31,7 @@ const char* prog_name;
 
 raw_trace_item_t* getNewRawTraceItem() {
 	raw_trace_item_t* new_raw_trace_item = (raw_trace_item_t*)malloc(sizeof(raw_trace_item_t));
-	new_raw_trace_item->buf = (char*)malloc(sizeof(char) * RAW_TRACE_BUF_SIZE);
+	new_raw_trace_item->buf = (char*) malloc(sizeof(char) * RAW_TRACE_BUF_SIZE);
 	new_raw_trace_item->cursor_pos = 0;
 	new_raw_trace_item->next = NULL;
 	return new_raw_trace_item;
@@ -132,6 +132,9 @@ void Trace(TRACE trace, void* v) {
 void Fini(INT32 code, VOID *v) {
 	FILE* out = fopen("trace.out", "w+");
 	printRawTrace(out);
+	printf("Trace finished\n");
+	printf("Size: %d Kb\n", raw_trace->trace_size / (1024));
+	printf("Trace saved to trace.out\n");
 }
 
 int main(int argc, char *argv[]) {
