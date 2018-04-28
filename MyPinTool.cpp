@@ -136,7 +136,7 @@ void Fini(INT32 code, VOID *v) {
 	printf("Trace finished\n");
 	printf("Size: %d Kb\n", raw_trace->trace_size / (1024));
 	printf("Saved to trace.out\n");
-	printf("=================")
+	printf("=================");
 }
 
 int main(int argc, char *argv[]) {
