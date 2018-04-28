@@ -132,9 +132,11 @@ void Trace(TRACE trace, void* v) {
 void Fini(INT32 code, VOID *v) {
 	FILE* out = fopen("trace.out", "w+");
 	printRawTrace(out);
+	printf("=================")
 	printf("Trace finished\n");
 	printf("Size: %d Kb\n", raw_trace->trace_size / (1024));
-	printf("Trace saved to trace.out\n");
+	printf("Saved to trace.out\n");
+	printf("=================")
 }
 
 int main(int argc, char *argv[]) {
