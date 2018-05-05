@@ -22,6 +22,8 @@ typedef struct raw_trace_s {
 	raw_trace_item_t* head;
 	raw_trace_item_t* tail;
 	size_t trace_size;
+
+	size_t threads_spawned_no;
 } raw_trace_t;
 
 raw_trace_t* raw_trace;
@@ -35,6 +37,15 @@ raw_trace_item_t* getNewRawTraceItem() {
 	new_raw_trace_item->cursor_pos = 0;
 	new_raw_trace_item->next = NULL;
 	return new_raw_trace_item;
+}
+
+raw_trace_t* getNewRawTrace() {
+	raw_trace_t* raw_trace = (raw_trace_t*)malloc(sizeof(raw_trace_t));
+	raw_trace->head = getNewRawTraceItem();
+	raw_trace->tail = raw_trace->head;
+	raw_trace->trace_size = 0;
+	raw_trace->threads_spawned_no = 0;
+	return raw_trace;
 }
 
 void recordInRawTrace(const char* buf, size_t buf_len) {
@@ -67,20 +78,20 @@ void INS_Analysis(char* disassembled_ins, UINT32 disassembled_ins_len) {
 }
 
 void INS_JumpAnalysis(ADDRINT target_branch, INT32 taken) {
-	if (taken) {
-		// printf("(%d): %x\n", sizeof(ADDRINT), target_branch);
-		/* Allocate enough space in order to save:
-			- @ char (1 byte)
-			- address in hex format (sizeof(ADDRINT) * 2 bytes)
-			- \n delimiter (1 byte)
-		*/
-		size_t buf_len = (sizeof(ADDRINT) * 2 + 2);
-		char* buf = (char*) malloc(sizeof(char) * buf_len);
-		buf[0] = '\n';
-		buf[1] = '@';
-		sprintf(buf + 2, "%x", target_branch);
-		recordInRawTrace(buf, buf_len);
-	}
+  if (taken) {
+    // printf("(%d): %x\n", sizeof(ADDRINT), target_branch);
+    /* Allocate enough space in order to save:
+            - @ char (1 byte)
+            - address in hex format (sizeof(ADDRINT) * 2 bytes)
+            - \n delimiter (1 byte)
+    */
+    size_t buf_len = (sizeof(ADDRINT) * 2 + 2);
+    char *buf = (char *)malloc(sizeof(char) * buf_len);
+    buf[0] = '\n';
+    buf[1] = '@';
+    sprintf(buf + 2, "%x", target_branch);
+    recordInRawTrace(buf, buf_len);
+  }
 }
 
 void Trace(TRACE trace, void* v) {
@@ -129,14 +140,19 @@ void Trace(TRACE trace, void* v) {
     }
 }
 
+void Thread(THREADID thread_idx, CONTEXT *ctx, INT32 flags, VOID* v) {
+	raw_trace->threads_spawned_no++;
+}
+
 void Fini(INT32 code, VOID *v) {
 	FILE* out = fopen("trace.out", "w+");
 	printRawTrace(out);
-	printf("=================\n");
+	printf("=======================\n");
 	printf("Trace finished\n");
 	printf("Size: %d Kb\n", raw_trace->trace_size / (1024));
+	printf("Threads spawned: %d\n", raw_trace->threads_spawned_no);
 	printf("Saved to trace.out\n");
-	printf("=================\n");
+	printf("=======================\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -144,11 +160,10 @@ int main(int argc, char *argv[]) {
 
 	prog_name = argv[argc - 1];
 
-	raw_trace = (raw_trace_t*) malloc(sizeof(raw_trace_t));
-	raw_trace->head = getNewRawTraceItem();
-	raw_trace->tail = raw_trace->head;
+	raw_trace = getNewRawTrace();
 
     TRACE_AddInstrumentFunction(Trace, 0);
+	PIN_AddThreadStartFunction(Thread, 0);
     PIN_AddFiniFunction(Fini, 0);
     PIN_StartProgram();
     return 0;
