@@ -50,7 +50,8 @@ raw_trace_t* getNewRawTrace() {
 
 void recordInRawTrace(const char* buf, size_t buf_len) {
 	raw_trace_item_t* raw_trace_item = raw_trace->tail;
-	// printf("Cursor@%d(%d) %s\n", raw_trace_item->cursor_pos, disassembled_ins_len, disassembled_ins);
+	//printf("Cursor@%d(%d) %s\n", raw_trace_item->cursor_pos, buf_len, buf);
+	//fflush(stdout);
 	// If buf of latest raw_trace_item is not enough create a new one
 	if (raw_trace_item->cursor_pos + buf_len >= RAW_TRACE_BUF_SIZE) {
 		raw_trace_item->next = getNewRawTraceItem();
@@ -72,26 +73,25 @@ void printRawTrace(FILE* f) {
 	}
 }
 
-void INS_Analysis(char* disassembled_ins, UINT32 disassembled_ins_len) {
+void INS_Analysis(char* disassembled_ins, UINT32 disassembled_ins_len, THREADID thread_idx) {
 	if (raw_trace->trace_size >= TRACE_LIMIT) return;
 	recordInRawTrace(disassembled_ins, disassembled_ins_len);
 }
 
-void INS_JumpAnalysis(ADDRINT target_branch, INT32 taken) {
-  if (taken) {
-    // printf("(%d): %x\n", sizeof(ADDRINT), target_branch);
+void INS_JumpAnalysis(ADDRINT target_branch, INT32 taken, THREADID thread_idx) {
+	if (!taken) return;
     /* Allocate enough space in order to save:
             - @ char (1 byte)
-            - address in hex format (sizeof(ADDRINT) * 2 bytes)
+            - address in hex format (sizeof(ADDRINT) * 2 bytes) + '0x' prefix (2 bytes)
             - \n delimiter (1 byte)
+			- 0 terminator (1 byte)
     */
-    size_t buf_len = (sizeof(ADDRINT) * 2 + 2);
-    char *buf = (char *)malloc(sizeof(char) * buf_len);
+    size_t buf_len = (sizeof(ADDRINT) * 2 + 5);
+    char *buf = (char*) calloc(1, sizeof(char) * buf_len);
     buf[0] = '\n';
     buf[1] = '@';
     sprintf(buf + 2, "%x", target_branch);
     recordInRawTrace(buf, buf_len);
-  }
 }
 
 void Trace(TRACE trace, void* v) {
@@ -103,8 +103,11 @@ void Trace(TRACE trace, void* v) {
 			IMG img = SEC_Img(sec);
 			if (IMG_Valid(img)) {
 				if (!strstr(IMG_Name(img).c_str(), prog_name)) {
+					//printf("[-] Ignoring %s\n", IMG_Name(img).c_str());
 					return;
 				}
+				//printf("[+] Instrumenting %s <= %s\n", IMG_Name(img).c_str(), prog_name);
+				//fflush(stdout);
 			} else return;
 		} else return;
 	} else return;
@@ -112,8 +115,13 @@ void Trace(TRACE trace, void* v) {
     for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl)) {
 		for (INS ins = BBL_InsHead(bbl); INS_Valid(ins); ins = INS_Next(ins)) {
 			string disassembled_ins_s = INS_Disassemble(ins);
-			uint32_t disassembled_ins_len = disassembled_ins_s.length() + 1;
-			char* disassembled_ins = (char*) calloc(1, sizeof(char) * (disassembled_ins_len ));
+			/* Allocate enough space to save
+				- Disassembled instruction (n bytes)
+				- INS_DELIMITER (1 byte)
+				- 0 terminator (1 byte)
+			*/
+			uint32_t disassembled_ins_len = strlen(disassembled_ins_s.c_str()) + 2;
+			char* disassembled_ins = (char*) calloc(1, sizeof(char) * (disassembled_ins_len));
 			disassembled_ins[0] = INS_DELIMITER;
 			strcpy(disassembled_ins + 1, disassembled_ins_s.c_str());
 			if (isFirstIns) {
@@ -124,16 +132,19 @@ void Trace(TRACE trace, void* v) {
 			INS_InsertCall(ins, IPOINT_BEFORE, 
 				(AFUNPTR)INS_Analysis,
 				IARG_PTR,
-				disassembled_ins,
+				disassembled_ins,	
 				IARG_UINT32,
 				disassembled_ins_len,
+				IARG_THREAD_ID,
 				IARG_END);
 			
+
 			if (INS_IsBranchOrCall(ins)) {
 				INS_InsertCall(ins, IPOINT_BEFORE,
 					(AFUNPTR)INS_JumpAnalysis,
 					IARG_BRANCH_TARGET_ADDR,
 					IARG_BRANCH_TAKEN,
+					IARG_THREAD_ID,
 					IARG_END);
 			}
 		}
@@ -141,6 +152,8 @@ void Trace(TRACE trace, void* v) {
 }
 
 void Thread(THREADID thread_idx, CONTEXT *ctx, INT32 flags, VOID* v) {
+	printf("[*] Spawned thread %d\n", thread_idx);
+	fflush(stdout);
 	raw_trace->threads_spawned_no++;
 }
 
