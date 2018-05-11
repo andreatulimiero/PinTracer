@@ -1,7 +1,7 @@
 import sys
 from graphviz import Digraph
 
-BRANCHES_LIMIT = 100
+BRANCHES_LIMIT = 10000
 branchesno = 0
 
 g = Digraph('CFG')
@@ -12,6 +12,9 @@ with open('trace.out') as f:
   edges = set()
   address = '0x0'
   for line in f:
+    # Cleanup the string
+    line = line.replace('\x00', '').strip()
+    # sys.exit(0)
     if line[0] == '@':
       g.node(address, label=block)
       edges.add((address, line[1:]))
@@ -20,11 +23,10 @@ with open('trace.out') as f:
       block = ''
 
       if branchesno >= BRANCHES_LIMIT:
-        g.edges(list(edges))
-        g.view()
-        sys.exit(0)
+        break
       branchesno += 1
     else:
-      block += line
+      block += line + '\n'
 
-g.view()
+  g.edges(list(edges))
+  g.render('CFG', view=True)
