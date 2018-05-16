@@ -6,11 +6,17 @@
 #define Mb 1024 * Kb
 #define Gb 1024 * Mb
 
+#define INS_DELIMITER '\n'
 #define ADDR_CHARS sizeof(ADDRINT)
 
 #define RAW_TRACE_BUF_SIZE 512*Kb
 #define TRACE_LIMIT 128*Mb
-#define INS_DELIMITER '\n'
+#define TRACE_NAME_LENGTH_LIMIT 128
+
+static TLS_KEY tls_key = INVALID_TLS_KEY;
+PIN_LOCK pin_lock;
+
+static size_t spawned_threads_no;
 
 typedef struct raw_trace_item_s {
 	char* buf;
@@ -25,8 +31,6 @@ typedef struct raw_trace_s {
 
 	size_t threads_spawned_no;
 } raw_trace_t;
-
-raw_trace_t* raw_trace;
 
 bool isFirstIns = true;
 const char* prog_name;
@@ -48,9 +52,9 @@ raw_trace_t* getNewRawTrace() {
 	return raw_trace;
 }
 
-void recordInRawTrace(const char* buf, size_t buf_len) {
+void recordInRawTrace(const char* buf, size_t buf_len, raw_trace_t* raw_trace) {
 	raw_trace_item_t* raw_trace_item = raw_trace->tail;
-	//printf("Cursor@%d(%d) %s\n", raw_trace_item->cursor_pos, buf_len, buf);
+	//fprintf(stdout, "Cursor@%d(%d) %s\n", raw_trace_item->cursor_pos, buf_len, buf);
 	//fflush(stdout);
 	// If buf of latest raw_trace_item is not enough create a new one
 	if (raw_trace_item->cursor_pos + buf_len >= RAW_TRACE_BUF_SIZE) {
@@ -63,7 +67,7 @@ void recordInRawTrace(const char* buf, size_t buf_len) {
 	raw_trace->trace_size += buf_len;
 }
 
-void printRawTrace(FILE* f) {
+void printRawTrace(FILE* f, raw_trace_t* raw_trace) {
 	raw_trace_item_t* rti = raw_trace->head;
 	while (rti != NULL) {
 		for (size_t i = 0; i < rti->cursor_pos; i++) {
@@ -74,12 +78,14 @@ void printRawTrace(FILE* f) {
 }
 
 void INS_Analysis(char* disassembled_ins, UINT32 disassembled_ins_len, THREADID thread_idx) {
+	raw_trace_t* raw_trace = (raw_trace_t*) PIN_GetThreadData(tls_key, thread_idx);
 	if (raw_trace->trace_size >= TRACE_LIMIT) return;
-	recordInRawTrace(disassembled_ins, disassembled_ins_len);
+	recordInRawTrace(disassembled_ins, disassembled_ins_len, raw_trace);
 }
 
 void INS_JumpAnalysis(ADDRINT target_branch, INT32 taken, THREADID thread_idx) {
 	if (!taken) return;
+	raw_trace_t* raw_trace = (raw_trace_t*)PIN_GetThreadData(tls_key, thread_idx);
     /* Allocate enough space in order to save:
             - @ char (1 byte)
             - address in hex format (sizeof(ADDRINT) * 2 bytes) + '0x' prefix (2 bytes)
@@ -91,7 +97,7 @@ void INS_JumpAnalysis(ADDRINT target_branch, INT32 taken, THREADID thread_idx) {
     buf[0] = '\n';
     buf[1] = '@';
     sprintf(buf + 2, "%x", target_branch);
-    recordInRawTrace(buf, buf_len);
+    recordInRawTrace(buf, buf_len, raw_trace);
 }
 
 void Trace(TRACE trace, void* v) {
@@ -103,10 +109,10 @@ void Trace(TRACE trace, void* v) {
 			IMG img = SEC_Img(sec);
 			if (IMG_Valid(img)) {
 				if (!strstr(IMG_Name(img).c_str(), prog_name)) {
-					//printf("[-] Ignoring %s\n", IMG_Name(img).c_str());
+					//fprintf(stdout, "[-] Ignoring %s\n", IMG_Name(img).c_str());
 					return;
 				}
-				//printf("[+] Instrumenting %s <= %s\n", IMG_Name(img).c_str(), prog_name);
+				//fprintf(stdout, "[+] Instrumenting %s <= %s\n", IMG_Name(img).c_str(), prog_name);
 				//fflush(stdout);
 			} else return;
 		} else return;
@@ -151,33 +157,63 @@ void Trace(TRACE trace, void* v) {
     }
 }
 
-void Thread(THREADID thread_idx, CONTEXT *ctx, INT32 flags, VOID* v) {
-	printf("[*] Spawned thread %d\n", thread_idx);
+void ThreadStart(THREADID thread_idx, CONTEXT* ctx, INT32 flags, VOID* v) {
+	fprintf(stdout, "[*] Spawned thread %d\n", thread_idx);
 	fflush(stdout);
-	raw_trace->threads_spawned_no++;
+	/* Initialize a raw trace per thread */
+	PIN_GetLock(&pin_lock, thread_idx);
+	spawned_threads_no++;
+	if (PIN_SetThreadData(tls_key, getNewRawTrace(), thread_idx) == FALSE) {
+		fprintf(stderr, "[x] PIN_SetThreadData failed");
+		PIN_ExitProcess(1);
+	}
+	PIN_ReleaseLock(&pin_lock);
+
+}
+
+void ThreadFini(THREADID thread_idx, const CONTEXT* ctx, INT32 code, VOID* v) {
+	fprintf(stdout, "[*] Finished thread %d\n", thread_idx);
+	fflush(stdout);
+	char filename[TRACE_NAME_LENGTH_LIMIT] = { 0 };
+	sprintf(filename, "trace_%d.out", thread_idx);
+	FILE* out = fopen(filename, "w+");
+	raw_trace_t* raw_trace = (raw_trace_t*)PIN_GetThreadData(tls_key, thread_idx);
+	printRawTrace(out, raw_trace);
+	fprintf(stdout, "[+] Saved to %s\n", filename);
 }
 
 void Fini(INT32 code, VOID *v) {
-	FILE* out = fopen("trace.out", "w+");
-	printRawTrace(out);
-	printf("=======================\n");
-	printf("Trace finished\n");
-	printf("Size: %d Kb\n", raw_trace->trace_size / (1024));
-	printf("Threads spawned: %d\n", raw_trace->threads_spawned_no);
-	printf("Saved to trace.out\n");
-	printf("=======================\n");
+	fprintf(stdout, "=======================\n");
+	fprintf(stdout, "Trace finished\n");
+	//fprintf(stdout, "Size: %d Kb\n", raw_trace->trace_size / (1024));
+	fprintf(stdout, "Threads spawned: %d\n", spawned_threads_no);
+	fprintf(stdout, "=======================\n");
 }
 
 int main(int argc, char *argv[]) {
-	PIN_Init(argc, argv);
+	/* Init PIN */
+	if (PIN_Init(argc, argv)) {
+		fprintf(stderr, "[x] An error occured while initiating PIN\n");
+		return 0;
+	}
+	
+	/* Prepare TLS */
+	tls_key = PIN_CreateThreadDataKey(NULL);
+	if (tls_key == INVALID_TLS_KEY) {
+		fprintf(stderr, "[x] Number of already allocated keys reached the MAX_CLIENT_TLS_KEYS limit\n");
+		PIN_ExitProcess(1);
+	}
 
+	/* Prepare Lock */
+	PIN_InitLock(&pin_lock);
+		
 	prog_name = argv[argc - 1];
-
-	raw_trace = getNewRawTrace();
-
     TRACE_AddInstrumentFunction(Trace, 0);
-	PIN_AddThreadStartFunction(Thread, 0);
-    PIN_AddFiniFunction(Fini, 0);
+
+	PIN_AddThreadStartFunction(ThreadStart, 0);
+	PIN_AddThreadFiniFunction(ThreadFini, 0);
+    
+	PIN_AddFiniFunction(Fini, 0);
     PIN_StartProgram();
     return 0;
 }
