@@ -4,13 +4,20 @@ from graphviz import Digraph
 BRANCHES_LIMIT = 10000
 branchesno = 0
 
+if len(sys.argv) < 2:
+  print("[x] Specify the name of the trace")
+  sys.exit(1)
+
+tracename = sys.argv[1]
+
 g = Digraph('CFG')
 g.attr('node', shape='box')
 
-with open('trace.out') as f:
+with open(tracename) as f:
   block = ''
   edges = set()
   address = '0x0'
+  print('[*] Parsing ' + tracename)
   for line in f:
     # Cleanup the string
     line = line.replace('\x00', '').strip()
@@ -29,4 +36,4 @@ with open('trace.out') as f:
       block += line + '\n'
 
   g.edges(list(edges))
-  g.render('CFG', view=True)
+  g.render('CFG_' + tracename, view=True)
