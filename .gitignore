@@ -491,5 +491,5 @@ venv.bak/
 settings.json
 
 # Traces and CFG output
-CFG_*.pdf
-trace_*.out
+CFG_*
+trace_*
