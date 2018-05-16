@@ -489,3 +489,7 @@ venv.bak/
 
 # VS Code
 settings.json
+
+# Traces and CFG output
+CFG_*.pdf
+trace_*.out
