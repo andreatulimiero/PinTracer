@@ -3,8 +3,8 @@
 #include <string.h>
 
 #define Kb 1024
-#define Mb 1024 * Kb
-#define Gb 1024 * Mb
+#define Mb 1024*Kb
+#define Gb 1024*Mb
 
 #define INS_DELIMITER '\n'
 #define ADDR_CHARS sizeof(ADDRINT)
@@ -79,6 +79,7 @@ void printRawTrace(FILE* f, raw_trace_t* raw_trace) {
 
 void INS_Analysis(char* disassembled_ins, UINT32 disassembled_ins_len, THREADID thread_idx) {
 	raw_trace_t* raw_trace = (raw_trace_t*) PIN_GetThreadData(tls_key, thread_idx);
+	// Trace limit guard
 	if (raw_trace->trace_size >= TRACE_LIMIT) return;
 	recordInRawTrace(disassembled_ins, disassembled_ins_len, raw_trace);
 }
@@ -86,6 +87,8 @@ void INS_Analysis(char* disassembled_ins, UINT32 disassembled_ins_len, THREADID 
 void INS_JumpAnalysis(ADDRINT target_branch, INT32 taken, THREADID thread_idx) {
 	if (!taken) return;
 	raw_trace_t* raw_trace = (raw_trace_t*)PIN_GetThreadData(tls_key, thread_idx);
+	// Trace limit guard
+	if (raw_trace->trace_size >= TRACE_LIMIT) return;
     /* Allocate enough space in order to save:
             - @ char (1 byte)
             - address in hex format (sizeof(ADDRINT) * 2 bytes) + '0x' prefix (2 bytes)
@@ -179,7 +182,7 @@ void ThreadFini(THREADID thread_idx, const CONTEXT* ctx, INT32 code, VOID* v) {
 	FILE* out = fopen(filename, "w+");
 	raw_trace_t* raw_trace = (raw_trace_t*)PIN_GetThreadData(tls_key, thread_idx);
 	printRawTrace(out, raw_trace);
-	fprintf(stdout, "[+] Saved to %s\n", filename);
+	fprintf(stdout, "[+] Trace for thread #%d saved to %s\n", thread_idx, filename);
 }
 
 void Fini(INT32 code, VOID *v) {
